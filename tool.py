@@ -148,7 +148,7 @@ def cut_photo():
             print_help()
             for infile in file_list:
                 img = Image.open(src_dir+infile)
-                Graphics(infile=src_dir+infile, outfile=src_dir + infile).cut_by_ratio()            
+                # Graphics(infile=src_dir+infile, outfile=src_dir + infile).cut_by_ratio()            
         else:
             pass
     else:
