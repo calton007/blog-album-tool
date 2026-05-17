@@ -1,40 +1,40 @@
-#coding: utf-8
+# coding: utf-8
+import argparse
+import subprocess
 from PIL import Image
-import os
-import sys
 import json
 from datetime import datetime
-from ImageProcess import Graphics
+from pathlib import Path
 
 # 定义压缩比，数值越大，压缩越小
 SIZE_normal = 1.0
 SIZE_small = 1.5
 SIZE_more_small = 2.0
 SIZE_more_small_small = 3.0
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
+DEFAULT_SRC_DIR = Path("photos")
+DEFAULT_DES_DIR = Path("min_photos")
+DEFAULT_JSON_OUT = Path("data.json")
 
 
 def make_directory(directory):
     """创建目录"""
-    os.makedirs(directory)
+    Path(directory).mkdir(parents=True, exist_ok=True)
 
 def directory_exists(directory):
     """判断目录是否存在"""
-    if os.path.exists(directory):
-        return True
-    else:
-        return False
+    return Path(directory).exists()
 
 def list_img_file(directory):
     """列出目录下所有文件，并筛选出图片文件列表返回"""
-    old_list = os.listdir(directory)
-    # print old_list
-    new_list = []
-    for filename in old_list:
-        name, fileformat = filename.split(".")
-        if fileformat.lower() == "jpg" or fileformat.lower() == "png" or fileformat.lower() == "gif":
-            new_list.append(filename)
-    # print new_list
-    return new_list
+    path = Path(directory)
+    if not path.exists():
+        raise FileNotFoundError(f"source directory not exist: {path}")
+    return sorted(
+        item.name
+        for item in path.iterdir()
+        if item.is_file() and item.suffix.lower() in IMAGE_EXTENSIONS
+    )
 
 
 def print_help():
@@ -54,56 +54,50 @@ def compress(choose, des_dir, src_dir, file_list):
     choose: str
             选择压缩的比例，有4个选项，越大压缩后的图片越小
     """
-    if choose == '1':
-        scale = SIZE_normal
-    if choose == '2':
-        scale = SIZE_small
-    if choose == '3':
-        scale = SIZE_more_small
-    if choose == '4':
-        scale = SIZE_more_small_small
+    scales = {
+        "1": SIZE_normal,
+        "2": SIZE_small,
+        "3": SIZE_more_small,
+        "4": SIZE_more_small_small,
+    }
+    scale = scales[choose]
+    src_dir = Path(src_dir)
+    des_dir = Path(des_dir)
+    des_dir.mkdir(parents=True, exist_ok=True)
     for infile in file_list:
-        img = Image.open(src_dir+infile)
-        # size_of_file = os.path.getsize(infile)
-        w, h = img.size
-        img.thumbnail((int(w/scale), int(h/scale)))
-        img.save(des_dir + infile)
-def compress_photo():
+        with Image.open(src_dir / infile) as img:
+            w, h = img.size
+            img.thumbnail((int(w / scale), int(h / scale)), Image.Resampling.LANCZOS)
+            img.save(des_dir / infile)
+
+def compress_photo(src_dir=DEFAULT_SRC_DIR, des_dir=DEFAULT_DES_DIR, choose="4"):
     '''调用压缩图片的函数
     '''
-    src_dir, des_dir = "photos/", "min_photos/"
-    
-    if directory_exists(src_dir):
-        if not directory_exists(src_dir):
-            make_directory(src_dir)
-        # business logic
-        file_list_src = list_img_file(src_dir)
-    if directory_exists(des_dir):
-        if not directory_exists(des_dir):
-            make_directory(des_dir)
-        file_list_des = list_img_file(des_dir)
-        # print file_list
-    '''如果已经压缩了，就不再压缩'''
-    for i in range(len(file_list_des)):
-        if file_list_des[i] in file_list_src:
-            file_list_src.remove(file_list_des[i])
-    compress('4', des_dir, src_dir, file_list_src)
+    src_dir = Path(src_dir)
+    des_dir = Path(des_dir)
+    file_list_src = list_img_file(src_dir)
+    des_dir.mkdir(parents=True, exist_ok=True)
+    file_list_des = list_img_file(des_dir)
 
-def handle_photo():
+    '''如果已经压缩了，就不再压缩'''
+    pending_files = [filename for filename in file_list_src if filename not in file_list_des]
+    compress(choose, des_dir, src_dir, pending_files)
+    print(f"compressed {len(pending_files)} image(s)")
+
+def handle_photo(src_dir=DEFAULT_SRC_DIR, output=DEFAULT_JSON_OUT):
     '''根据图片的文件名处理成需要的json格式的数据
     
     -----------
     最后将data.json文件存到博客的source/photos文件夹下
     '''
-    src_dir, des_dir = "photos/", "min_photos/"
+    src_dir = Path(src_dir)
+    output = Path(output)
     file_list = list_img_file(src_dir)
     list_info = []
-    for i in range(len(file_list)):
-        filename = file_list[i]
-        date_str, info = filename.split("_")
-        info, _ = info.split(".")
+    for i, filename in enumerate(file_list):
+        date_str, info = Path(filename).stem.split("_", 1)
         date = datetime.strptime(date_str, "%Y-%m-%d")
-        year_month = date_str[0:7]            
+        year_month = date_str[0:7]
         if i == 0:  # 处理第一个文件
             new_dict = {"date": year_month, "arr":{'year': date.year,
                                                                    'month': date.month,
@@ -128,8 +122,10 @@ def handle_photo():
             list_info[-1]['arr']['type'].append('image')
     list_info.reverse()  # 翻转
     final_dict = {"list": list_info}
-    with open("../calton007.github.io/source/photos/data.json","w") as fp:
-        json.dump(final_dict, fp)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8") as fp:
+        json.dump(final_dict, fp, ensure_ascii=False, indent=2)
+    print(f"wrote {output}")
 
 def cut_photo():
     """裁剪算法
@@ -137,22 +133,7 @@ def cut_photo():
     ----------
     调用Graphics类中的裁剪算法，将src_dir目录下的文件进行裁剪（裁剪成正方形）
     """
-    src_dir = "photos/"
-    if directory_exists(src_dir):
-        if not directory_exists(src_dir):
-            make_directory(src_dir)
-        # business logic
-        file_list = list_img_file(src_dir)
-        # print file_list
-        if file_list:
-            print_help()
-            for infile in file_list:
-                img = Image.open(src_dir+infile)
-                # Graphics(infile=src_dir+infile, outfile=src_dir + infile).cut_by_ratio()            
-        else:
-            pass
-    else:
-        print("source directory not exist!")     
+    print("cut_photo is not implemented")
 
 
 
@@ -163,16 +144,45 @@ def git_operation():
     ----------
     需要安装git命令行工具，并且添加到环境变量中
     '''
-    os.system('git add --all')
-    os.system('git commit -m "add photos"')
-    os.system('git push origin master')
+    subprocess.run(["git", "add", "--all"], check=True)
+    subprocess.run(["git", "commit", "-m", "add photos"], check=True)
+    subprocess.run(["git", "push", "origin", "master"], check=True)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Blog album image utility")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    compress_parser = subparsers.add_parser("compress", help="compress photos into min_photos")
+    compress_parser.add_argument("--src", default=DEFAULT_SRC_DIR)
+    compress_parser.add_argument("--dest", default=DEFAULT_DES_DIR)
+    compress_parser.add_argument("--scale", choices=["1", "2", "3", "4"], default="4")
+
+    json_parser = subparsers.add_parser("json", help="generate album data json")
+    json_parser.add_argument("--src", default=DEFAULT_SRC_DIR)
+    json_parser.add_argument("--output", default=DEFAULT_JSON_OUT)
+
+    all_parser = subparsers.add_parser("all", help="compress photos and generate json")
+    all_parser.add_argument("--src", default=DEFAULT_SRC_DIR)
+    all_parser.add_argument("--dest", default=DEFAULT_DES_DIR)
+    all_parser.add_argument("--output", default=DEFAULT_JSON_OUT)
+    all_parser.add_argument("--scale", choices=["1", "2", "3", "4"], default="4")
+
+    subparsers.add_parser("publish", help="git add, commit and push")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    if args.command == "compress":
+        compress_photo(args.src, args.dest, args.scale)
+    elif args.command == "json":
+        handle_photo(args.src, args.output)
+    elif args.command == "all":
+        compress_photo(args.src, args.dest, args.scale)
+        handle_photo(args.src, args.output)
+    elif args.command == "publish":
+        git_operation()
 
 if __name__ == "__main__":
-    cut_photo()        # 裁剪图片，裁剪成正方形，去中间部分
-    compress_photo()   # 压缩图片，并保存到mini_photos文件夹下
-    git_operation()    # 提交到github仓库
-    handle_photo()     # 将文件处理成json格式，存到博客仓库中
-    
-    
-    
-    
+    main()
